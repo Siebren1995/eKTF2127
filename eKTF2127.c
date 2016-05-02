@@ -292,7 +292,7 @@ static int icn8318_probe(struct i2c_client *client,
 }
 
 static const struct of_device_id icn8318_of_match[] = {
-	{ .compatible = "chipone,icn8318" },
+	{ .compatible = "elan,ektf2127" },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, icn8318_of_match);
@@ -305,7 +305,8 @@ MODULE_DEVICE_TABLE(i2c, icn8318_i2c_id);
 
 static struct i2c_driver icn8318_driver = {
 	.driver = {
-		.name	= "chipone_icn8318",
+		//.name	= "chipone_icn8318",
+		.name	= "elan_ektf2127",
 		.pm	= &icn8318_pm_ops,
 		.of_match_table = icn8318_of_match,
 	},
