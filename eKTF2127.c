@@ -36,8 +36,12 @@
 
 struct icn8318_touch {
 	__u8 slot;
-	__be16 x;
-	__be16 y;
+//__be16 x;
+//__be16 y;
+
+	int x;
+	int y;
+
 	__u8 pressure;	/* Seems more like finger width then pressure really */
 	__u8 event;
 /* The difference between 2 and 3 is unclear */
@@ -56,7 +60,7 @@ struct icn8318_touch_data {
 struct icn8318_data {
 	struct i2c_client *client;
 	struct input_dev *input;
-	struct gpio_desc *wake_gpio;
+	struct gpio_desc *power_gpios;
 	u32 max_x;
 	u32 max_y;
 	bool invert_x;
@@ -91,14 +95,56 @@ static inline bool icn8318_touch_active(u8 event)
 	       (event == ICN8318_EVENT_UPDATE2);
 }
 
+static int get_coordinates(int *x, int *y, char *buf)
+{
+        if (buf[0] == 0 && buf[1] == 0 && buf[2] == 0)
+                return -1;
+                
+        *x = (buf[0] & 0x0f);
+        *x <<= 8;
+        *x |= buf[2];
+        
+        *y = (buf[0] & 0xf0);
+        *y <<=4;
+        *y |= buf[1];
+        
+        return 0;
+}
+
 static irqreturn_t icn8318_irq(int irq, void *dev_id)
 {
 	struct icn8318_data *data = dev_id;
 	struct device *dev = &data->client->dev;
 	struct icn8318_touch_data touch_data;
-	int i, ret, x, y;
+	char buff[25];
+	int i, ret, x[5], y[5], index, count;
 
-	ret = icn8318_read_touch_data(data->client, &touch_data);
+//ret = icn8318_read_touch_data(data->client, &touch_data);
+
+	ret = i2c_master_recv(data->client, buff, 25);
+//*buff2[0] = be16_to_cpu(buff[0]);
+	//dev_err(dev, "Buffer: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n", buff[0], buff[1], buff[2], buff[3], buff[4], buff[5], buff[6], buff[7], buff[8], buff[9], buff[10]);
+
+	count = buff[1] & 0x07;
+		
+		if (count > 0) {
+		        dev_err(dev, "Number of touches: %d \n", count);
+		        for (i = 0; i < count; i++) {
+		                index = 2 + i * 3;
+		                ret = get_coordinates(&x[i], &y[i], &buff[index]);
+
+		                dev_err(dev, "x%d: %d, y%d: %d\n", i, x[i], i, y[i]);
+		        }
+		}
+
+	get_coordinates(&x, &y, buff);
+	
+	/*dev_err(dev, "Amount of touches %d", touch_data.touch_count);
+	x = be16_to_cpu(touch_data.touches[0].x);
+	y = be16_to_cpu(touch_data.touches[0].y);
+	dev_err(dev, "X: %d", x);
+	dev_err(dev, "Y: %d", y);*/
+
 	if (ret < 0) {
 		dev_err(dev, "Error reading touch data: %d\n", ret);
 		return IRQ_HANDLED;
@@ -114,6 +160,8 @@ static irqreturn_t icn8318_irq(int irq, void *dev_id)
 		return IRQ_HANDLED;
 	}
 
+	touch_data.touch_count = count;
+
 	if (touch_data.touch_count > ICN8318_MAX_TOUCHES) {
 		dev_warn(dev, "Too much touches %d > %d\n",
 			 touch_data.touch_count, ICN8318_MAX_TOUCHES);
@@ -121,6 +169,10 @@ static irqreturn_t icn8318_irq(int irq, void *dev_id)
 	}
 
 	for (i = 0; i < touch_data.touch_count; i++) {
+
+		touch_data.touches[i].x = x[i];
+		touch_data.touches[i].y = y[i];
+
 		struct icn8318_touch *touch = &touch_data.touches[i];
 		bool act = icn8318_touch_active(touch->event);
 
@@ -129,21 +181,21 @@ static irqreturn_t icn8318_irq(int irq, void *dev_id)
 		if (!act)
 			continue;
 
-		x = be16_to_cpu(touch->x);
-		y = be16_to_cpu(touch->y);
+		//x = be16_to_cpu(touch->x);
+		//y = be16_to_cpu(touch->y);
 
-		if (data->invert_x)
+	/*	if (data->invert_x)
 			x = data->max_x - x;
 
 		if (data->invert_y)
-			y = data->max_y - y;
+			y = data->max_y - y;*/
 
 		if (!data->swap_x_y) {
-			input_event(data->input, EV_ABS, ABS_MT_POSITION_X, x);
-			input_event(data->input, EV_ABS, ABS_MT_POSITION_Y, y);
+			input_event(data->input, EV_ABS, ABS_MT_POSITION_X, x[i]);
+			input_event(data->input, EV_ABS, ABS_MT_POSITION_Y, y[i]);
 		} else {
-			input_event(data->input, EV_ABS, ABS_MT_POSITION_X, y);
-			input_event(data->input, EV_ABS, ABS_MT_POSITION_Y, x);
+			input_event(data->input, EV_ABS, ABS_MT_POSITION_X, y[i]);
+			input_event(data->input, EV_ABS, ABS_MT_POSITION_Y, x[i]);
 		}
 	}
 
@@ -158,7 +210,7 @@ static int icn8318_start(struct input_dev *dev)
 	struct icn8318_data *data = input_get_drvdata(dev);
 
 	enable_irq(data->client->irq);
-	gpiod_set_value_cansleep(data->wake_gpio, 1);
+	gpiod_set_value_cansleep(data->power_gpios, 1);
 
 	return 0;
 }
@@ -170,7 +222,7 @@ static void icn8318_stop(struct input_dev *dev)
 	disable_irq(data->client->irq);
 	i2c_smbus_write_byte_data(data->client, ICN8318_REG_POWER,
 				  ICN8318_POWER_HIBERNATE);
-	gpiod_set_value_cansleep(data->wake_gpio, 0);
+	gpiod_set_value_cansleep(data->power_gpios, 0);
 }
 
 #ifdef CONFIG_PM_SLEEP
@@ -220,11 +272,11 @@ static int icn8318_probe(struct i2c_client *client,
 	if (!data)
 		return -ENOMEM;
 
-	data->wake_gpio = devm_gpiod_get(dev, "wake", GPIOD_OUT_LOW);
-	if (IS_ERR(data->wake_gpio)) {
-		error = PTR_ERR(data->wake_gpio);
+	data->power_gpios = devm_gpiod_get(dev, "power", GPIOD_OUT_LOW);
+	if (IS_ERR(data->power_gpios)) {
+		error = PTR_ERR(data->power_gpios);
 		if (error != -EPROBE_DEFER)
-			dev_err(dev, "Error getting wake gpio: %d\n", error);
+			dev_err(dev, "Error getting power gpio: %d\n", error);
 		return error;
 	}
 
@@ -319,3 +371,7 @@ module_i2c_driver(icn8318_driver);
 MODULE_DESCRIPTION("ChipOne icn8318 I2C Touchscreen Driver");
 MODULE_AUTHOR("Hans de Goede <hdegoede@redhat.com>");
 MODULE_LICENSE("GPL");
+
+//MODULE_DESCRIPTION("ChipOne icn8318 I2C Touchscreen Driver");
+//MODULE_AUTHOR("Hans de Goede <hdegoede@redhat.com>");
+//MODULE_LICENSE("GPL");
