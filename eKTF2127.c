@@ -33,30 +33,28 @@
 #define EKTF2127_POWER_HIBERNATE	2
 
 #define EKTF2127_MAX_TOUCHES		5
-#define eKTF2127_MAX_TOUCHES		5
 
 struct ektf2127_touch {
-	__u8 slot;
-//__be16 x;
-//__be16 y;
+	u16 x;
+	u16 y;
 
-	int x;
-	int y;
+	/* The difference between 2 and 3 is unclear */
+	#define EKTF2127_EVENT_NO_DATA	1 /* No finger seen yet since wakeup */
+	#define EKTF2127_EVENT_UPDATE1	2 /* New or updated coordinates */
+	#define EKTF2127_EVENT_UPDATE2	3 /* New or updated coordinates */
+	#define EKTF2127_EVENT_END	4 /* Finger lifted */
+}__packed;
 
-	__u8 pressure;	/* Seems more like finger width then pressure really */
-	__u8 event;
-/* The difference between 2 and 3 is unclear */
-#define EKTF2127_EVENT_NO_DATA	1 /* No finger seen yet since wakeup */
-#define EKTF2127_EVENT_UPDATE1	2 /* New or updated coordinates */
-#define EKTF2127_EVENT_UPDATE2	3 /* New or updated coordinates */
-#define EKTF2127_EVENT_END	4 /* Finger lifted */
-} __packed;
-
-struct ektf2127_touch_data {
+/*struct ektf2127_touch_data {
 	__u8 softbutton;
 	__u8 touch_count;
-	struct ektf2127_touch touches[eKTF2127_MAX_TOUCHES];
-} __packed;
+	struct ektf2127_touch touches[EKTF2127_MAX_TOUCHES];
+} __packed;*/
+
+struct ektf2127_touch_data {
+	__u8 touch_count;
+	struct ektf2127_touch touches[EKTF2127_MAX_TOUCHES];
+}__packed;
 
 struct ektf2127_data {
 	struct i2c_client *client;
@@ -96,19 +94,29 @@ static inline bool ektf2127_touch_active(u8 event)
 	       (event == EKTF2127_EVENT_UPDATE2);
 }
 
-static int get_coordinates(int *x, int *y, char *buf)
+//static int get_coordinates(int *x, int *y, char *buf)
+static int get_coordinates(struct ektf2127_touch_data *touch_data, char *buf)
 {
+	int index = 0;
+	int i = 0;
+
         if (buf[0] == 0 && buf[1] == 0 && buf[2] == 0)
                 return -1;
-                
-        *x = (buf[0] & 0x0f);
-        *x <<= 8;
-        *x |= buf[2];
+
+	for (i = 0; i < touch_data->touch_count; i++) {
+		index = 2 + i * 3;
+
+		touch_data->touches[i].x = (buf[index] & 0x0f);
+        	touch_data->touches[i].x <<= 8;
+        	touch_data->touches[i].x |= buf[index + 2];
         
-        *y = (buf[0] & 0xf0);
-        *y <<=4;
-        *y |= buf[1];
-        
+        	touch_data->touches[i].y = (buf[index] & 0xf0);
+        	touch_data->touches[i].y <<=4;
+        	touch_data->touches[i].y |= buf[index + 1];
+
+		//ret = get_coordinates(&x, &y, &buff[index]);
+		//dev_err(dev, "x%d: %d, y%d: %d\n", i, x, i, y);
+	}        
         return 0;
 }
 
@@ -118,7 +126,7 @@ static irqreturn_t ektf2127_irq(int irq, void *dev_id)
 	struct device *dev = &data->client->dev;
 	struct ektf2127_touch_data touch_data;
 	char buff[25];
-	int i, ret, x, y, index, count;
+	int i, ret;
 
 //ret = ektf2127_read_touch_data(data->client, &touch_data);
 
@@ -127,20 +135,27 @@ static irqreturn_t ektf2127_irq(int irq, void *dev_id)
 //*buff2[0] = be16_to_cpu(buff[0]);
 	//dev_err(dev, "Buffer: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n", buff[0], buff[1], buff[2], buff[3], buff[4], buff[5], buff[6], buff[7], buff[8], buff[9], buff[10]);
 
-	count = buff[1] & 0x07;
-		
-		if (count > 0) {
-		        dev_err(dev, "Number of touches: %d \n", count);
+	touch_data.touch_count = buff[1] & 0x07;
 
-		        for (i = 0; i < count; i++) {
-		                index = 2 + i * 3;
-		                ret = get_coordinates(&x, &y, &buff[index]);
-				if(ret != 0){
-					dev_err(dev, "Error reading touch data: %d\n", ret);
-					return IRQ_HANDLED;
-				}
-				dev_err(dev, "x%d: %d, y%d: %d\n", i, x, i, y);
-		        }
+	if(touch_data.touch_count > EKTF2127_MAX_TOUCHES){
+		dev_err(dev, "Too many touches %d > %d\n", touch_data.touch_count, EKTF2127_MAX_TOUCHES);
+		touch_data.touch_count = EKTF2127_MAX_TOUCHES;
+	}
+		
+	if (touch_data.touch_count > 0) {
+	        dev_err(dev, "Number of touches: %d \n", touch_data.touch_count);
+
+		ret = get_coordinates(&touch_data, &buff[0]);
+		if(ret != 0){
+			dev_err(dev, "Error reading touch data: %d\n", ret);
+			return IRQ_HANDLED;
+	        }
+	}
+	else
+		return IRQ_HANDLED;
+
+	for(i = 0; i < touch_data.touch_count; i++){
+		dev_err(dev, "x%d: %d, y%d: %d\n", i, touch_data.touches[i].x, i, touch_data.touches[i].y);
 		}
 	
 	/*dev_err(dev, "Amount of touches %d", touch_data.touch_count);
@@ -167,12 +182,7 @@ static irqreturn_t ektf2127_irq(int irq, void *dev_id)
 		touch_data.touch_count = EKTF2127_MAX_TOUCHES;
 	}*/
 
-	if(count > eKTF2127_MAX_TOUCHES){
-		dev_err(dev, "Too many touches %d > %d\n", count, eKTF2127_MAX_TOUCHES);
-		count = eKTF2127_MAX_TOUCHES;
-	}
-
-	for (i = 0; i < count; i++) {
+	for (i = 0; i < touch_data.touch_count; i++) {
 
 		/*struct ektf2127_touch *touch = &touch_data.touches[i];
 		bool act = ektf2127_touch_active(touch->event);
@@ -202,8 +212,8 @@ static irqreturn_t ektf2127_irq(int irq, void *dev_id)
 		input_mt_slot(data->input, 0);
 		input_mt_report_slot_state(data->input, MT_TOOL_FINGER, true);
 
-		input_event(data->input, EV_ABS, ABS_MT_POSITION_X, x);
-		input_event(data->input, EV_ABS, ABS_MT_POSITION_Y, y);
+		input_event(data->input, EV_ABS, ABS_MT_POSITION_X, touch_data.touches[i].x);
+		input_event(data->input, EV_ABS, ABS_MT_POSITION_Y, touch_data.touches[i].y);
 	}
 
 	input_mt_sync_frame(data->input);
@@ -322,7 +332,7 @@ static int ektf2127_probe(struct i2c_client *client,
 				     data->max_x, fuzz_x, 0);
 	}
 
-	error = input_mt_init_slots(input, eKTF2127_MAX_TOUCHES,
+	error = input_mt_init_slots(input, EKTF2127_MAX_TOUCHES,
 				    INPUT_MT_DIRECT | INPUT_MT_DROP_UNUSED);
 	if (error)
 		return error;
