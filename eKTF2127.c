@@ -34,22 +34,16 @@
 
 #define EKTF2127_MAX_TOUCHES		5
 
+/* The difference between 2 and 3 is unclear */
+#define EKTF2127_EVENT_NO_DATA	1 /* No finger seen yet since wakeup */
+#define EKTF2127_EVENT_UPDATE1	2 /* New or updated coordinates */
+#define EKTF2127_EVENT_UPDATE2	3 /* New or updated coordinates */
+#define EKTF2127_EVENT_END	4 /* Finger lifted */
+
 struct ektf2127_touch {
 	u16 x;
 	u16 y;
-
-	/* The difference between 2 and 3 is unclear */
-	#define EKTF2127_EVENT_NO_DATA	1 /* No finger seen yet since wakeup */
-	#define EKTF2127_EVENT_UPDATE1	2 /* New or updated coordinates */
-	#define EKTF2127_EVENT_UPDATE2	3 /* New or updated coordinates */
-	#define EKTF2127_EVENT_END	4 /* Finger lifted */
 }__packed;
-
-/*struct ektf2127_touch_data {
-	__u8 softbutton;
-	__u8 touch_count;
-	struct ektf2127_touch touches[EKTF2127_MAX_TOUCHES];
-} __packed;*/
 
 struct ektf2127_touch_data {
 	__u8 touch_count;
@@ -67,34 +61,6 @@ struct ektf2127_data {
 	bool swap_x_y;
 };
 
-static int ektf2127_read_touch_data(struct i2c_client *client,
-				   struct ektf2127_touch_data *touch_data)
-{
-	u8 reg = EKTF2127_REG_TOUCHDATA;
-	struct i2c_msg msg[2] = {
-		{
-			.addr = client->addr,
-			.len = 1,
-			.buf = &reg
-		},
-		{
-			.addr = client->addr,
-			.flags = I2C_M_RD,
-			.len = sizeof(struct ektf2127_touch_data),
-			.buf = (u8 *)touch_data
-		}
-	};
-
-	return i2c_transfer(client->adapter, msg, 2);
-}
-
-static inline bool ektf2127_touch_active(u8 event)
-{
-	return (event == EKTF2127_EVENT_UPDATE1) ||
-	       (event == EKTF2127_EVENT_UPDATE2);
-}
-
-//static int get_coordinates(int *x, int *y, char *buf)
 static int get_coordinates(struct ektf2127_touch_data *touch_data, char *buf)
 {
 	int index = 0;
@@ -113,9 +79,6 @@ static int get_coordinates(struct ektf2127_touch_data *touch_data, char *buf)
         	touch_data->touches[i].y = (buf[index] & 0xf0);
         	touch_data->touches[i].y <<=4;
         	touch_data->touches[i].y |= buf[index + 1];
-
-		//ret = get_coordinates(&x, &y, &buff[index]);
-		//dev_err(dev, "x%d: %d, y%d: %d\n", i, x, i, y);
 	}        
         return 0;
 }
@@ -128,12 +91,7 @@ static irqreturn_t ektf2127_irq(int irq, void *dev_id)
 	char buff[25];
 	int i, ret;
 
-//ret = ektf2127_read_touch_data(data->client, &touch_data);
-
 	ret = i2c_master_recv(data->client, buff, 25);
-
-//*buff2[0] = be16_to_cpu(buff[0]);
-	//dev_err(dev, "Buffer: %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x\n", buff[0], buff[1], buff[2], buff[3], buff[4], buff[5], buff[6], buff[7], buff[8], buff[9], buff[10]);
 
 	touch_data.touch_count = buff[1] & 0x07;
 
@@ -141,73 +99,18 @@ static irqreturn_t ektf2127_irq(int irq, void *dev_id)
 		dev_err(dev, "Too many touches %d > %d\n", touch_data.touch_count, EKTF2127_MAX_TOUCHES);
 		touch_data.touch_count = EKTF2127_MAX_TOUCHES;
 	}
-		
-	if (touch_data.touch_count > 0) {
-	        dev_err(dev, "Number of touches: %d \n", touch_data.touch_count);
+
+	for (i = 0; i < touch_data.touch_count; i++) {
+
+		dev_err(dev, "Number of touches: %d \n", touch_data.touch_count);
 
 		ret = get_coordinates(&touch_data, &buff[0]);
 		if(ret != 0){
 			dev_err(dev, "Error reading touch data: %d\n", ret);
 			return IRQ_HANDLED;
 	        }
-	}
-	else
-		return IRQ_HANDLED;
 
-	for(i = 0; i < touch_data.touch_count; i++){
 		dev_err(dev, "x%d: %d, y%d: %d\n", i, touch_data.touches[i].x, i, touch_data.touches[i].y);
-		}
-	
-	/*dev_err(dev, "Amount of touches %d", touch_data.touch_count);
-	x = be16_to_cpu(touch_data.touches[0].x);
-	y = be16_to_cpu(touch_data.touches[0].y);
-	dev_err(dev, "X: %d", x);
-	dev_err(dev, "Y: %d", y);*/
-
-//if (touch_data.softbutton) {
-		/*
-		 * Other data is invalid when a softbutton is pressed.
-		 * This needs some extra devicetree bindings to map the icn8318
-		 * softbutton codes to evdev codes. Currently no known devices
-		 * use this.
-		 */
-//return IRQ_HANDLED;
-//}
-
-	//touch_data.touch_count = count;
-
-	/*if (touch_data.touch_count > EKTF2127_MAX_TOUCHES) {
-		dev_warn(dev, "Too much touches %d > %d\n",
-			 touch_data.touch_count, EKTF2127_MAX_TOUCHES);
-		touch_data.touch_count = EKTF2127_MAX_TOUCHES;
-	}*/
-
-	for (i = 0; i < touch_data.touch_count; i++) {
-
-		/*struct ektf2127_touch *touch = &touch_data.touches[i];
-		bool act = ektf2127_touch_active(touch->event);
-
-		input_mt_slot(data->input, touch->slot);
-		input_mt_report_slot_state(data->input, MT_TOOL_FINGER, act);
-		if (!act)
-			continue;*/
-
-		//x = be16_to_cpu(touch->x);
-		//y = be16_to_cpu(touch->y);
-
-	/*	if (data->invert_x)
-			x = data->max_x - x;
-
-		if (data->invert_y)
-			y = data->max_y - y;*/
-
-		/*if (!data->swap_x_y) {
-			input_event(data->input, EV_ABS, ABS_MT_POSITION_X, x[i]);
-			input_event(data->input, EV_ABS, ABS_MT_POSITION_Y, y[i]);
-		} else {
-			input_event(data->input, EV_ABS, ABS_MT_POSITION_X, y[i]);
-			input_event(data->input, EV_ABS, ABS_MT_POSITION_Y, x[i]);
-		}*/
 
 		input_mt_slot(data->input, 0);
 		input_mt_report_slot_state(data->input, MT_TOOL_FINGER, true);
@@ -242,7 +145,7 @@ static void ektf2127_stop(struct input_dev *dev)
 	gpiod_set_value_cansleep(data->power_gpios, 0);
 }
 
-#ifdef CONFIG_PM_SLEEP
+//#ifdef CONFIG_PM_SLEEP
 static int ektf2127_suspend(struct device *dev)
 {
 	struct ektf2127_data *data = i2c_get_clientdata(to_i2c_client(dev));
@@ -266,7 +169,7 @@ static int ektf2127_resume(struct device *dev)
 
 	return 0;
 }
-#endif
+//#endif
 
 static SIMPLE_DEV_PM_OPS(ektf2127_pm_ops, ektf2127_suspend, ektf2127_resume);
 
