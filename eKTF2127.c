@@ -1,8 +1,8 @@
-
 /*
  * Driver for ELAN eKTF2127 i2c touchscreen controller
  *
- * For this driver the layout of the Chipone icn8318 i2c touchscreen controller is used.
+ * For this driver the layout of the Chipone icn8318 i2c 
+ * touchscreencontroller is used.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -62,13 +62,11 @@ struct ektf2127_data {
 	bool swap_x_y;
 };
 
-static int get_coordinates(struct ektf2127_touch_data *touch_data, char *buf)
+static void retrieve_coordinates(struct ektf2127_touch_data *touch_data, 
+				char *buf)
 {
 	int index = 0;
 	int i = 0;
-
-        if (buf[0] == 0 && buf[1] == 0 && buf[2] == 0)
-                return -1;
 
 	for (i = 0; i < touch_data->touch_count; i++) {
 		index = 2 + i * 3;
@@ -80,8 +78,7 @@ static int get_coordinates(struct ektf2127_touch_data *touch_data, char *buf)
         	touch_data->touches[i].y = (buf[index] & 0xf0);
         	touch_data->touches[i].y <<=4;
         	touch_data->touches[i].y |= buf[index + 1];
-	}        
-        return 0;
+	}
 }
 
 static irqreturn_t ektf2127_irq(int irq, void *dev_id)
@@ -90,35 +87,33 @@ static irqreturn_t ektf2127_irq(int irq, void *dev_id)
 	struct device *dev = &data->client->dev;
 	struct ektf2127_touch_data touch_data;
 	char buff[25];
-	char temp_buff[25];
 	int i, ret;
 
 	ret = i2c_master_recv(data->client, buff, 25);
+	if (ret != 25) {
+		dev_err(dev, "Error reading touch data");
+		return IRQ_HANDLED;
+	}
 
 	touch_data.touch_count = buff[1] & 0x07;
 
-	if(touch_data.touch_count > EKTF2127_MAX_TOUCHES){
-		dev_err(dev, "Too many touches %d > %d\n", touch_data.touch_count, EKTF2127_MAX_TOUCHES);
+	if (touch_data.touch_count > EKTF2127_MAX_TOUCHES){
+		dev_err(dev, "Too many touches %d > %d\n", 
+			touch_data.touch_count, EKTF2127_MAX_TOUCHES);
 		touch_data.touch_count = EKTF2127_MAX_TOUCHES;
 	}
 
 	for (i = 0; i < touch_data.touch_count; i++) {
 
-		dev_err(dev, "Number of touches: %d \n", touch_data.touch_count);
-
-		ret = get_coordinates(&touch_data, &buff[0]);
-		if(ret != 0){
-			dev_err(dev, "Error reading touch data: %d\n", ret);
-			return IRQ_HANDLED;
-	        }
-
-		dev_err(dev, "x%d: %d, y%d: %d\n", i, touch_data.touches[i].x, i, touch_data.touches[i].y);
+		retrieve_coordinates(&touch_data, &buff[0]);
 
 		input_mt_slot(data->input, 0);
 		input_mt_report_slot_state(data->input, MT_TOOL_FINGER, true);
 
-		input_event(data->input, EV_ABS, ABS_MT_POSITION_X, touch_data.touches[i].x);
-		input_event(data->input, EV_ABS, ABS_MT_POSITION_Y, touch_data.touches[i].y);
+		input_event(data->input, EV_ABS, ABS_MT_POSITION_X, 
+			touch_data.touches[i].x);
+		input_event(data->input, EV_ABS, ABS_MT_POSITION_Y, 
+			touch_data.touches[i].y);
 	}
 
 	input_mt_sync_frame(data->input);
@@ -145,7 +140,6 @@ static void ektf2127_stop(struct input_dev *dev)
 	gpiod_set_value_cansleep(data->power_gpios, 0);
 }
 
-//#ifdef CONFIG_PM_SLEEP
 static int ektf2127_suspend(struct device *dev)
 {
 	struct ektf2127_data *data = i2c_get_clientdata(to_i2c_client(dev));
@@ -169,9 +163,9 @@ static int ektf2127_resume(struct device *dev)
 
 	return 0;
 }
-//#endif
 
-static SIMPLE_DEV_PM_OPS(ektf2127_pm_ops, ektf2127_suspend, ektf2127_resume);
+static SIMPLE_DEV_PM_OPS(ektf2127_pm_ops, ektf2127_suspend, 
+			ektf2127_resume);
 
 static int ektf2127_probe(struct i2c_client *client,
 			 const struct i2c_device_id *id)
@@ -184,8 +178,6 @@ static int ektf2127_probe(struct i2c_client *client,
 	u32 fuzz_x = 0, fuzz_y = 0;
 	char buff[25];
 	int height, width, error, ret = 0;
-	
-	dev_err(dev, "Start probe function");
 
 	if (!client->irq) {
 		dev_err(dev, "Error no irq specified\n");
@@ -215,6 +207,75 @@ static int ektf2127_probe(struct i2c_client *client,
 	input->close = ektf2127_stop;
 	input->dev.parent = dev;
 
+	data->client = client;
+
+	/* read hello */
+	i2c_master_recv(data->client, buff, 4);
+
+	/* Read resolution from chip */
+
+	/* Request height */
+	buff[0] = 0x53; /* REQUEST */
+	buff[1] = 0x63; /* HEIGHT */
+	buff[2] = 0x00;
+	buff[3] = 0x00;
+	ret = i2c_master_send(data->client, buff, 4);
+	if (ret != 4)
+		dev_err(dev, "Error requesting height from, continue anyway"
+			" with information from devicetree");
+
+	msleep(20);
+
+	/* Read response */
+	ret = i2c_master_recv(data->client, buff, 4);
+	if (ret != 4)
+		dev_err(dev, "Error receiving height, continue anyway"
+			" with information from devicetree");
+
+	if (( buff[0] == 0x52) && (buff[1] == 0x63)) {
+		height = ((buff[3] & 0xf0) << 4) | buff[2];
+		data->max_y = height;
+
+	} else
+		dev_err(dev, "Error receiving height data from"
+			" wrong register");
+	
+	/* Request width */
+	buff[0] = 0x53; /* REQUEST */
+	buff[1] = 0x60; /* WIDTH */
+	buff[2] = 0x00;
+	buff[3] = 0x00;
+	ret = i2c_master_send(data->client, buff, 4);
+	if (ret != 4)
+		dev_err(dev, "Error requesting width, continue anyway" 
+			" with information from devicetree");
+
+	msleep(20);
+
+	/* Read response */
+	ret = i2c_master_recv(data->client, buff, 4);
+	if (ret != 4)
+		dev_err(dev, "Error receiving width, continue anyway"
+			" with information from devicetree");
+
+	if ((buff[0] == 0x52) && (buff[1] == 0x60)) {
+		width = (((buff[3] & 0xf0) << 4) | buff[2]);
+		data->max_x = width;
+	} else
+		dev_err(dev, "Error receiving width data from"
+			" wrong register");
+
+	/* Touchscreen resolution can be overruled by devicetree*/
+	of_property_read_u32(np, "touchscreen-size-x", &data->max_x);
+	of_property_read_u32(np, "touchscreen-size-y", &data->max_y);
+
+	/* Optional */
+	of_property_read_u32(np, "touchscreen-fuzz-x", &fuzz_x);
+	of_property_read_u32(np, "touchscreen-fuzz-y", &fuzz_y);
+	data->invert_x = of_property_read_bool(np, "touchscreen-inverted-x");
+	data->invert_y = of_property_read_bool(np, "touchscreen-inverted-y");
+	data->swap_x_y = of_property_read_bool(np, "touchscreen-swapped-x-y");
+
 	if (!data->swap_x_y) {
 		input_set_abs_params(input, ABS_MT_POSITION_X, 0,
 				     data->max_x, fuzz_x, 0);
@@ -232,7 +293,6 @@ static int ektf2127_probe(struct i2c_client *client,
 	if (error)
 		return error;
 
-	data->client = client;
 	data->input = input;
 	input_set_drvdata(input, data);
 
@@ -243,75 +303,6 @@ static int ektf2127_probe(struct i2c_client *client,
 		return error;
 	}
 
-	i2c_set_clientdata(client, data);
-
-	/* read hello */
-	ret = i2c_master_recv(data->client, buff, 25);
-	dev_err(dev, "Hello: %02x %02x %02x %02x\n", buff[0], buff[1], buff[2], buff[3]);
-	dev_err(dev, "ret : %d", ret);
-	/* Read resolution chip from i2c */
-	
-	/* Request height */
-	buff[0] = 0x53; /* REQUEST */
-	buff[1] = 0x60; /* HEIGHT */
-	buff[2] = 0x00;
-	buff[3] = 0x00;
-	i2c_master_send(data->client, buff, 4);
-	msleep(20);
-	/* Read response */
-	//assert(ret == 4);
-	i2c_master_recv(data->client, buff, 25);
-	//assert(ret == 4);
-	//assert(buff[0] == 0x52);
-	//assert(buff[1] == 0x60);
-	height = ((buff[3] & 0xf0) << 4) | buff[2];
-	dev_err(dev, "height: %d\n", height);
-	data->max_y = height;
-	
-	
-	/* Request width */
-	buff[0] = 0x53; /* REQUEST */
-	buff[1] = 0x63; /* WIDTH */
-	buff[2] = 0x00;
-	buff[3] = 0x00;
-	dev_err(dev, "12c before: %d\n", ret);
-	ret = i2c_master_send(data->client, buff, 4);
-	dev_err(dev, "12c write: %d\n", ret);
-	msleep(20);
-	//assert(ret == 4);
-	/* Read response */
-	ret = i2c_master_recv(data->client, buff, 25);
-	if( ret != 4) {
-		dev_err(dev, "ret != 4 ret=: %d\n", ret);
-	}
-	if( buff[0] != 0x52) {
-		dev_err(dev, "buff[0] != 0x52 buff[0]=: %02x\n", buff[0]);
-	}
-	if( buff[1] != 0x63) {
-		dev_err(dev, "buff[1] != 0x63 buff[1]=: %02x\n", buff[1]);
-	}
-
-	//assert(ret == 4);
-	//assert(buff[0] == 0x52);
-	//assert(buff[1] == 0x63);
-	dev_err(dev, "12c read: %d\n", ret);
-	width = (((buff[3] & 0xf0) << 4) | buff[2]);
-	dev_err(dev, "width: %d\n", width);
-	data->max_x = width;
-	
-	/*  */
-
-
-	//of_property_read_u32(np, "touchscreen-size-x", &data->max_x);
-	of_property_read_u32(np, "touchscreen-size-y", &data->max_y);
-
-	/* Optional */
-	of_property_read_u32(np, "touchscreen-fuzz-x", &fuzz_x);
-	of_property_read_u32(np, "touchscreen-fuzz-y", &fuzz_y);
-	data->invert_x = of_property_read_bool(np, "touchscreen-inverted-x");
-	data->invert_y = of_property_read_bool(np, "touchscreen-inverted-y");
-	data->swap_x_y = of_property_read_bool(np, "touchscreen-swapped-x-y");
-
 	/* Stop device till opened */
 	ektf2127_stop(data->input);
 
@@ -319,7 +310,7 @@ static int ektf2127_probe(struct i2c_client *client,
 	if (error)
 		return error;
 
-	dev_err(dev, "End of probe function");
+	i2c_set_clientdata(client, data);
 
 	return 0;
 }
@@ -330,7 +321,8 @@ static const struct of_device_id ektf2127_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, ektf2127_of_match);
 
-/* This is useless for OF-enabled devices, but it is needed by I2C subsystem */
+/* This is useless for OF-enabled devices, 
+but it is needed by I2C subsystem */
 static const struct i2c_device_id ektf2127_i2c_id[] = {
 	{ },
 };
