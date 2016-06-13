@@ -344,7 +344,3 @@ MODULE_DESCRIPTION("ELAN eKTF2127 I2C Touchscreen Driver");
 MODULE_AUTHOR("Michel Verlaan");
 MODULE_AUTHOR("Siebren Vroegindeweij");
 MODULE_LICENSE("GPL");
-
-//MODULE_DESCRIPTION("ChipOne icn8318 I2C Touchscreen Driver");
-//MODULE_AUTHOR("Hans de Goede <hdegoede@redhat.com>");
-//MODULE_LICENSE("GPL");
