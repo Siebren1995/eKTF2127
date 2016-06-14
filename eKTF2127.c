@@ -1,7 +1,7 @@
 /*
  * Driver for ELAN eKTF2127 i2c touchscreen controller
  *
- * For this driver the layout of the Chipone icn8318 i2c 
+ * For this driver the layout of the Chipone icn8318 i2c
  * touchscreencontroller is used.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -44,12 +44,12 @@
 struct ektf2127_touch {
 	u16 x;
 	u16 y;
-}__packed;
+} __packed;
 
 struct ektf2127_touch_data {
 	__u8 touch_count;
 	struct ektf2127_touch touches[EKTF2127_MAX_TOUCHES];
-}__packed;
+} __packed;
 
 struct ektf2127_data {
 	struct i2c_client *client;
@@ -62,7 +62,7 @@ struct ektf2127_data {
 	bool swap_x_y;
 };
 
-static void retrieve_coordinates(struct ektf2127_touch_data *touch_data, 
+static void retrieve_coordinates(struct ektf2127_touch_data *touch_data,
 				char *buf)
 {
 	int index = 0;
@@ -72,12 +72,12 @@ static void retrieve_coordinates(struct ektf2127_touch_data *touch_data,
 		index = 2 + i * 3;
 
 		touch_data->touches[i].x = (buf[index] & 0x0f);
-        	touch_data->touches[i].x <<= 8;
-        	touch_data->touches[i].x |= buf[index + 2];
-        
-        	touch_data->touches[i].y = (buf[index] & 0xf0);
-        	touch_data->touches[i].y <<=4;
-        	touch_data->touches[i].y |= buf[index + 1];
+		touch_data->touches[i].x <<= 8;
+		touch_data->touches[i].x |= buf[index + 2];
+
+		touch_data->touches[i].y = (buf[index] & 0xf0);
+		touch_data->touches[i].y <<= 4;
+		touch_data->touches[i].y |= buf[index + 1];
 	}
 }
 
@@ -97,8 +97,8 @@ static irqreturn_t ektf2127_irq(int irq, void *dev_id)
 
 	touch_data.touch_count = buff[1] & 0x07;
 
-	if (touch_data.touch_count > EKTF2127_MAX_TOUCHES){
-		dev_err(dev, "Too many touches %d > %d\n", 
+	if (touch_data.touch_count > EKTF2127_MAX_TOUCHES) {
+		dev_err(dev, "Too many touches %d > %d\n",
 			touch_data.touch_count, EKTF2127_MAX_TOUCHES);
 		touch_data.touch_count = EKTF2127_MAX_TOUCHES;
 	}
@@ -110,9 +110,9 @@ static irqreturn_t ektf2127_irq(int irq, void *dev_id)
 		input_mt_slot(data->input, 0);
 		input_mt_report_slot_state(data->input, MT_TOOL_FINGER, true);
 
-		input_event(data->input, EV_ABS, ABS_MT_POSITION_X, 
+		input_event(data->input, EV_ABS, ABS_MT_POSITION_X,
 			touch_data.touches[i].x);
-		input_event(data->input, EV_ABS, ABS_MT_POSITION_Y, 
+		input_event(data->input, EV_ABS, ABS_MT_POSITION_Y,
 			touch_data.touches[i].y);
 	}
 
@@ -164,7 +164,7 @@ static int ektf2127_resume(struct device *dev)
 	return 0;
 }
 
-static SIMPLE_DEV_PM_OPS(ektf2127_pm_ops, ektf2127_suspend, 
+static SIMPLE_DEV_PM_OPS(ektf2127_pm_ops, ektf2127_suspend,
 			ektf2127_resume);
 
 static int ektf2127_probe(struct i2c_client *client,
@@ -196,7 +196,7 @@ static int ektf2127_probe(struct i2c_client *client,
 			dev_err(dev, "Error getting power gpio: %d\n", error);
 		return error;
 	}
-	
+
 	input = devm_input_allocate_device(dev);
 	if (!input)
 		return -ENOMEM;
@@ -232,14 +232,14 @@ static int ektf2127_probe(struct i2c_client *client,
 		dev_err(dev, "Error receiving height, continue anyway"
 			" with information from devicetree");
 
-	if (( buff[0] == 0x52) && (buff[1] == 0x63)) {
+	if ((buff[0] == 0x52) && (buff[1] == 0x63)) {
 		height = ((buff[3] & 0xf0) << 4) | buff[2];
 		data->max_y = height;
 
 	} else
 		dev_err(dev, "Error receiving height data from"
 			" wrong register");
-	
+
 	/* Request width */
 	buff[0] = 0x53; /* REQUEST */
 	buff[1] = 0x60; /* WIDTH */
@@ -247,7 +247,7 @@ static int ektf2127_probe(struct i2c_client *client,
 	buff[3] = 0x00;
 	ret = i2c_master_send(data->client, buff, 4);
 	if (ret != 4)
-		dev_err(dev, "Error requesting width, continue anyway" 
+		dev_err(dev, "Error requesting width, continue anyway"
 			" with information from devicetree");
 
 	msleep(20);
@@ -321,8 +321,9 @@ static const struct of_device_id ektf2127_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, ektf2127_of_match);
 
-/* This is useless for OF-enabled devices, 
-but it is needed by I2C subsystem */
+/* This is useless for OF-enabled devices,
+ * but it is needed by I2C subsystem
+ */
 static const struct i2c_device_id ektf2127_i2c_id[] = {
 	{ },
 };
