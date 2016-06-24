@@ -41,16 +41,6 @@
 #define EKTF2127_EVENT_UPDATE2	3 /* New or updated coordinates */
 #define EKTF2127_EVENT_END	4 /* Finger lifted */
 
-struct ektf2127_touch {
-	u16 x;
-	u16 y;
-} __packed;
-
-struct ektf2127_touch_data {
-	__u8 touch_count;
-	struct ektf2127_touch touches[EKTF2127_MAX_TOUCHES];
-} __packed;
-
 struct ektf2127_data {
 	struct i2c_client *client;
 	struct input_dev *input;
@@ -62,22 +52,22 @@ struct ektf2127_data {
 	bool swap_x_y;
 };
 
-static void retrieve_coordinates(struct ektf2127_touch_data *touch_data,
-				char *buf)
+static void retrieve_coordinates(struct input_mt_pos *touches,
+				int touch_count, char *buf)
 {
 	int index = 0;
 	int i = 0;
 
-	for (i = 0; i < touch_data->touch_count; i++) {
+	for (i = 0; i < touch_count; i++) {
 		index = 2 + i * 3;
 
-		touch_data->touches[i].x = (buf[index] & 0x0f);
-		touch_data->touches[i].x <<= 8;
-		touch_data->touches[i].x |= buf[index + 2];
+		touches[i].x = (buf[index] & 0x0f);
+		touches[i].x <<= 8;
+		touches[i].x |= buf[index + 2];
 
-		touch_data->touches[i].y = (buf[index] & 0xf0);
-		touch_data->touches[i].y <<= 4;
-		touch_data->touches[i].y |= buf[index + 1];
+		touches[i].y = (buf[index] & 0xf0);
+		touches[i].y <<= 4;
+		touches[i].y |= buf[index + 1];
 	}
 }
 
@@ -85,7 +75,9 @@ static irqreturn_t ektf2127_irq(int irq, void *dev_id)
 {
 	struct ektf2127_data *data = dev_id;
 	struct device *dev = &data->client->dev;
-	struct ektf2127_touch_data touch_data;
+	struct input_mt_pos touches[EKTF2127_MAX_TOUCHES];
+	int touch_count;
+	int slots[EKTF2127_MAX_TOUCHES];
 	char buff[25];
 	int i, ret;
 
@@ -95,25 +87,28 @@ static irqreturn_t ektf2127_irq(int irq, void *dev_id)
 		return IRQ_HANDLED;
 	}
 
-	touch_data.touch_count = buff[1] & 0x07;
+	touch_count = buff[1] & 0x07;
 
-	if (touch_data.touch_count > EKTF2127_MAX_TOUCHES) {
+	if (touch_count > EKTF2127_MAX_TOUCHES) {
 		dev_err(dev, "Too many touches %d > %d\n",
-			touch_data.touch_count, EKTF2127_MAX_TOUCHES);
-		touch_data.touch_count = EKTF2127_MAX_TOUCHES;
+			touch_count, EKTF2127_MAX_TOUCHES);
+		touch_count = EKTF2127_MAX_TOUCHES;
 	}
 
-	for (i = 0; i < touch_data.touch_count; i++) {
+	retrieve_coordinates(touches, touch_count, buff);
 
-		retrieve_coordinates(&touch_data, &buff[0]);
+	for (i = 0; i < touch_count; i++) {
 
-		input_mt_slot(data->input, 0);
+		input_mt_assign_slots(data->input, slots, touches,
+			touch_count, 0);
+
+		input_mt_slot(data->input, slots[i]);
 		input_mt_report_slot_state(data->input, MT_TOOL_FINGER, true);
 
 		input_event(data->input, EV_ABS, ABS_MT_POSITION_X,
-			touch_data.touches[i].x);
+			touches[i].x);
 		input_event(data->input, EV_ABS, ABS_MT_POSITION_Y,
-			touch_data.touches[i].y);
+			touches[i].y);
 	}
 
 	input_mt_sync_frame(data->input);
@@ -177,7 +172,7 @@ static int ektf2127_probe(struct i2c_client *client,
 
 	u32 fuzz_x = 0, fuzz_y = 0;
 	char buff[25];
-	int height, width, error, ret = 0;
+	int error, ret = 0;
 
 	if (!client->irq) {
 		dev_err(dev, "Error no irq specified\n");
@@ -220,25 +215,28 @@ static int ektf2127_probe(struct i2c_client *client,
 	buff[2] = 0x00;
 	buff[3] = 0x00;
 	ret = i2c_master_send(data->client, buff, 4);
-	if (ret != 4)
-		dev_err(dev, "Error requesting height from, continue anyway"
-			" with information from devicetree");
+	if (ret != 4) {
+		dev_err(dev, "Error requesting height");
+		return ret < 0 ? ret : -EIO;
+	}
 
 	msleep(20);
 
 	/* Read response */
 	ret = i2c_master_recv(data->client, buff, 4);
-	if (ret != 4)
-		dev_err(dev, "Error receiving height, continue anyway"
-			" with information from devicetree");
+	if (ret != 4) {
+		dev_err(dev, "Error receiving height");
+		return ret < 0 ? ret : -EIO;
+	}
+
 
 	if ((buff[0] == 0x52) && (buff[1] == 0x63)) {
-		height = ((buff[3] & 0xf0) << 4) | buff[2];
-		data->max_y = height;
-
-	} else
+		data->max_y = ((buff[3] & 0xf0) << 4) | buff[2];
+	} else {
 		dev_err(dev, "Error receiving height data from"
 			" wrong register");
+		return ret < 0 ? ret : -EIO;
+	}
 
 	/* Request width */
 	buff[0] = 0x53; /* REQUEST */
@@ -246,24 +244,29 @@ static int ektf2127_probe(struct i2c_client *client,
 	buff[2] = 0x00;
 	buff[3] = 0x00;
 	ret = i2c_master_send(data->client, buff, 4);
-	if (ret != 4)
-		dev_err(dev, "Error requesting width, continue anyway"
-			" with information from devicetree");
+	if (ret != 4) {
+		dev_err(dev, "Error requesting width");
+		return ret < 0 ? ret : -EIO;
+	}
 
 	msleep(20);
 
 	/* Read response */
 	ret = i2c_master_recv(data->client, buff, 4);
-	if (ret != 4)
-		dev_err(dev, "Error receiving width, continue anyway"
-			" with information from devicetree");
+	if (ret != 4) {
+		dev_err(dev, "Error receiving width");
+		return ret < 0 ? ret : -EIO;
+	}
+
 
 	if ((buff[0] == 0x52) && (buff[1] == 0x60)) {
-		width = (((buff[3] & 0xf0) << 4) | buff[2]);
-		data->max_x = width;
-	} else
+		data->max_x = (((buff[3] & 0xf0) << 4) | buff[2]);
+	} else {
 		dev_err(dev, "Error receiving width data from"
 			" wrong register");
+		return ret < 0 ? ret : -EIO;
+	}
+
 
 	/* Touchscreen resolution can be overruled by devicetree*/
 	of_property_read_u32(np, "touchscreen-size-x", &data->max_x);
@@ -289,7 +292,8 @@ static int ektf2127_probe(struct i2c_client *client,
 	}
 
 	error = input_mt_init_slots(input, EKTF2127_MAX_TOUCHES,
-				    INPUT_MT_DIRECT | INPUT_MT_DROP_UNUSED);
+				    INPUT_MT_DIRECT | INPUT_MT_DROP_UNUSED
+				    | INPUT_MT_TRACK);
 	if (error)
 		return error;
 
