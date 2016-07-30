@@ -4,10 +4,9 @@
  * For this driver the layout of the Chipone icn8318 i2c
  * touchscreencontroller is used.
  *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 3 of the License, or
- * (at your option) any later version.
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License version 2 as published by
+ * the Free Software Foundation.
  *
  * Author:
  * Michel Verlaan <michel.verl@gmail.com>
@@ -22,6 +21,7 @@
 #include <linux/i2c.h>
 #include <linux/input.h>
 #include <linux/input/mt.h>
+#include <linux/input/touchscreen.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/delay.h>
@@ -45,11 +45,7 @@ struct ektf2127_data {
 	struct i2c_client *client;
 	struct input_dev *input;
 	struct gpio_desc *power_gpios;
-	u32 max_x;
-	u32 max_y;
-	bool invert_x;
-	bool invert_y;
-	bool swap_x_y;
+	struct touchscreen_properties prop;
 };
 
 static void retrieve_coordinates(struct input_mt_pos *touches,
@@ -96,11 +92,11 @@ static irqreturn_t ektf2127_irq(int irq, void *dev_id)
 	}
 
 	retrieve_coordinates(touches, touch_count, buff);
+	
+	input_mt_assign_slots(data->input, slots, touches,
+		touch_count, 0);
 
 	for (i = 0; i < touch_count; i++) {
-
-		input_mt_assign_slots(data->input, slots, touches,
-			touch_count, 0);
 
 		input_mt_slot(data->input, slots[i]);
 		input_mt_report_slot_state(data->input, MT_TOOL_FINGER, true);
@@ -166,11 +162,9 @@ static int ektf2127_probe(struct i2c_client *client,
 			 const struct i2c_device_id *id)
 {
 	struct device *dev = &client->dev;
-	struct device_node *np = dev->of_node;
 	struct ektf2127_data *data;
 	struct input_dev *input;
-
-	u32 fuzz_x = 0, fuzz_y = 0;
+	
 	char buff[25];
 	int error, ret = 0;
 
@@ -183,8 +177,10 @@ static int ektf2127_probe(struct i2c_client *client,
 	if (!data)
 		return -ENOMEM;
 
+	/* This requests the gpio *and* turns on the touchscreen controller */
+
 	data->power_gpios = devm_gpiod_get(dev, "power", GPIOD_OUT_HIGH);
-	msleep(20);
+
 	if (IS_ERR(data->power_gpios)) {
 		error = PTR_ERR(data->power_gpios);
 		if (error != -EPROBE_DEFER)
@@ -205,7 +201,9 @@ static int ektf2127_probe(struct i2c_client *client,
 	data->client = client;
 
 	/* read hello */
+	msleep(20);
 	i2c_master_recv(data->client, buff, 4);
+
 
 	/* Read resolution from chip */
 
@@ -272,24 +270,18 @@ static int ektf2127_probe(struct i2c_client *client,
 	of_property_read_u32(np, "touchscreen-size-x", &data->max_x);
 	of_property_read_u32(np, "touchscreen-size-y", &data->max_y);
 
-	/* Optional */
-	of_property_read_u32(np, "touchscreen-fuzz-x", &fuzz_x);
-	of_property_read_u32(np, "touchscreen-fuzz-y", &fuzz_y);
-	data->invert_x = of_property_read_bool(np, "touchscreen-inverted-x");
-	data->invert_y = of_property_read_bool(np, "touchscreen-inverted-y");
-	data->swap_x_y = of_property_read_bool(np, "touchscreen-swapped-x-y");
-
-	if (!data->swap_x_y) {
-		input_set_abs_params(input, ABS_MT_POSITION_X, 0,
-				     data->max_x, fuzz_x, 0);
-		input_set_abs_params(input, ABS_MT_POSITION_Y, 0,
-				     data->max_y, fuzz_y, 0);
-	} else {
-		input_set_abs_params(input, ABS_MT_POSITION_X, 0,
-				     data->max_y, fuzz_y, 0);
-		input_set_abs_params(input, ABS_MT_POSITION_Y, 0,
-				     data->max_x, fuzz_x, 0);
-	}
+	touchscreen_report_pos(data->input, &data->prop, touch->x,
+				touch->y, true);
+				
+	input_set_capability(input, EV_ABS, ABS_MT_POSITION_X);
+	input_set_capability(input, EV_ABS, ABS_MT_POSITION_Y);
+	
+	touchscreen_parse_properties(input, true, &data->prop);
+	if (!input_abs_get_max(input, ABS_MT_POSITION_X) ||
+	    !input_abs_get_max(input, ABS_MT_POSITION_Y)) {
+	    	dev_err(dev, "Error touchscreen-size-x and/or -y missing\n");
+	    	return -EINVAL;	    
+	    }
 
 	error = input_mt_init_slots(input, EKTF2127_MAX_TOUCHES,
 				    INPUT_MT_DIRECT | INPUT_MT_DROP_UNUSED
@@ -325,11 +317,9 @@ static const struct of_device_id ektf2127_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, ektf2127_of_match);
 
-/* This is useless for OF-enabled devices,
- * but it is needed by I2C subsystem
- */
 static const struct i2c_device_id ektf2127_i2c_id[] = {
-	{ },
+	{"ektf2127", 0},
+	{}
 };
 MODULE_DEVICE_TABLE(i2c, ektf2127_i2c_id);
 
@@ -337,7 +327,7 @@ static struct i2c_driver ektf2127_driver = {
 	.driver = {
 		.name	= "elan_ektf2127",
 		.pm	= &ektf2127_pm_ops,
-		.of_match_table = ektf2127_of_match,
+		.of_match_table = of_match_ptr(ektf2127_of_match),
 	},
 	.probe = ektf2127_probe,
 	.id_table = ektf2127_i2c_id,
