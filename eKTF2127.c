@@ -92,7 +92,6 @@ static irqreturn_t ektf2127_irq(int irq, void *dev_id)
 	}
 
 	retrieve_coordinates(touches, touch_count, buff);
-	
 	input_mt_assign_slots(data->input, slots, touches,
 		touch_count, 0);
 
@@ -100,11 +99,8 @@ static irqreturn_t ektf2127_irq(int irq, void *dev_id)
 
 		input_mt_slot(data->input, slots[i]);
 		input_mt_report_slot_state(data->input, MT_TOOL_FINGER, true);
-
-		input_event(data->input, EV_ABS, ABS_MT_POSITION_X,
-			touches[i].x);
-		input_event(data->input, EV_ABS, ABS_MT_POSITION_Y,
-			touches[i].y);
+		touchscreen_report_pos(data->input, &data->prop, touches[i].x,
+			touches[i].y, true);
 	}
 
 	input_mt_sync_frame(data->input);
@@ -164,7 +160,6 @@ static int ektf2127_probe(struct i2c_client *client,
 	struct device *dev = &client->dev;
 	struct ektf2127_data *data;
 	struct input_dev *input;
-	
 	char buff[25];
 	int error, ret = 0;
 
@@ -178,9 +173,7 @@ static int ektf2127_probe(struct i2c_client *client,
 		return -ENOMEM;
 
 	/* This requests the gpio *and* turns on the touchscreen controller */
-
 	data->power_gpios = devm_gpiod_get(dev, "power", GPIOD_OUT_HIGH);
-
 	if (IS_ERR(data->power_gpios)) {
 		error = PTR_ERR(data->power_gpios);
 		if (error != -EPROBE_DEFER)
@@ -203,7 +196,6 @@ static int ektf2127_probe(struct i2c_client *client,
 	/* read hello */
 	msleep(20);
 	i2c_master_recv(data->client, buff, 4);
-
 
 	/* Read resolution from chip */
 
@@ -269,13 +261,9 @@ static int ektf2127_probe(struct i2c_client *client,
 	/* Touchscreen resolution can be overruled by devicetree*/
 	of_property_read_u32(np, "touchscreen-size-x", &data->max_x);
 	of_property_read_u32(np, "touchscreen-size-y", &data->max_y);
-
-	touchscreen_report_pos(data->input, &data->prop, touch->x,
-				touch->y, true);
 				
 	input_set_capability(input, EV_ABS, ABS_MT_POSITION_X);
 	input_set_capability(input, EV_ABS, ABS_MT_POSITION_Y);
-	
 	touchscreen_parse_properties(input, true, &data->prop);
 	if (!input_abs_get_max(input, ABS_MT_POSITION_X) ||
 	    !input_abs_get_max(input, ABS_MT_POSITION_Y)) {
