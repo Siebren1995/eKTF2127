@@ -5,9 +5,10 @@ Required properties:
  - reg			  : I2C slave address of the chip (0x40)
  - interrupt-parent	  : a phandle pointing to the interrupt controller
 			    serving the interrupt for this chip
- - interrupts		  : interrupt specification for the icn8318 interrupt
- - wake-gpios		  : GPIO specification for the WAKE input of the 
- 			    controller
+ - interrupts		  : interrupt specification for the ektf2127 interrupt
+ - wake-gpios		  : GPIO specification for the pin connected to the
+ 			    ektf2127's wake input. This needs to be driven high
+ 			    to take ektf2127 out of it's low power state
 
 Optional properties:
  - pinctrl-names	  : should be "default"
